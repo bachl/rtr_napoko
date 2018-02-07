@@ -1,0 +1,500 @@
+---
+title: "Analyse von RTR-Daten"
+author: "Marko Bachl, Universität Hohenheim"
+output: html_notebook
+---
+
+# Datensätze
+
+Über GESIS sind die Datensätze aus den TV-Duell-Modulen der GLES verfügbar. Datensätze und Dokumentation zum Duell 2013 zwischen Merkel und Steinbrück können nach Anmeldung hier heruntergeladen werden:
+
+* RTR-Daten Dial: http://dx.doi.org/10.4232/1.11944
+* RTR-Daten Push-Button: http://dx.doi.org/10.4232/1.11945
+* Befragung: http://dx.doi.org/10.4232/1.12142
+* Inhaltsanalyse: http://dx.doi.org/10.4232/1.12770
+
+
+# Pakete
+
+Falls die folgenden Pakete noch nicht installiert sind, mit `install.packages()` installieren.
+
+```{r}
+library(haven) # Zum Import der SPSS-Datensätze
+library(lubridate) # Umgang mit Zeit-Variablen
+library(tidyverse); theme_set(theme_bw()) # Datenmanagement und Plots
+```
+
+# Dial-Messungen
+
+## Aufbau eines typischen Datensatzes mit Dial-Messungen
+
+Häufig sind RTR-Datensätze in SPSS im sogenannten Wide-Format gespeichert: Jede Zeile ist ein Proband, jede Variable die RTR-Messung in einer Sekunde.
+
+```{r}
+d_dail = read_sav("ZA5711_v1-0-0.sav")
+d_dail %>% select(match_id, starts_with("t"))
+```
+
+Für die Datenanalyse in R ist das Long-Format praktischer. Jede Zeile ist eine Kombination von Proband und Messzeitpunkt. Über die Variable *match_id* können Eigenschaften der Probanden zugespielt werden, über den Zeitcode *time* erfolgt die Zuordnung zum Inhalt der Debatte.
+
+```{r}
+d_dail_long = d_dail %>%
+  select(match_id, starts_with("t")) %>%
+  gather(time, rtr, -match_id) %>% 
+  mutate(time = str_sub(time, 2),
+         time = as.POSIXct(time, format = "%H%M%S"), # Zeit im R Zeitformat
+         rtr = rtr - 4) # RTR-Skala von -3 bis 3
+d_dail_long
+```
+
+## Plausibilitätscheck der Dial-Daten
+
+Wie häufig hat ein Proband geregelt?
+
+```{r}
+d_dail_long %>% group_by(match_id) %>% 
+  mutate(change = rtr != lag(rtr)) %>% 
+  count(change) %>% 
+  filter(change) %>% 
+  ggplot(aes(n)) + geom_histogram()
+
+d_dail_long %>% group_by(match_id) %>% 
+  mutate(change = rtr != lag(rtr)) %>% 
+  count(change) %>% 
+  filter(change) %>% 
+  arrange(n) # "LD-A-15"
+
+d_dail_long %>% group_by(match_id) %>% 
+  mutate(change = rtr != lag(rtr)) %>% 
+  count(change) %>% 
+  filter(change) %>% 
+  arrange(desc(n)) # "MZ-J-32", "MZ-J-06", "MZ-J-13", "LD-A-37"
+```
+
+Auffällige Probanden
+
+```{r}
+d_dail_long %>% 
+  filter(match_id %in% c("LD-A-15", "MZ-J-32", "MZ-J-06", "MZ-J-13", "LD-A-37")) %>% 
+  ggplot(aes(time, rtr)) + geom_line() + facet_wrap("match_id")
+```
+
+
+## Aggregation der RTR-Messungen über Personen
+
+Für die einfachste Variante der typischen RTR-Kurve werden die Messungen aller Personen zu einer Sekunde als Mittelwert zusammengefasst.
+
+```{r}
+d_dail_long %>%
+  group_by(time) %>% 
+  summarise(M_rtr = mean(rtr),
+            SD_rtr = sd(rtr),
+            n_rtr = n())
+```
+
+Ein Liniendiagramm ergibt die typische RTR-Kurve.
+
+```{r}
+d_dail_long %>%
+  group_by(time) %>% 
+  summarise(M_rtr = mean(rtr),
+            SD_rtr = sd(rtr),
+            n_rtr = n()) %>% 
+  ggplot(aes(time, M_rtr)) + geom_line(aes(time, M_rtr))
+```
+
+# Push-Button-Messungen
+
+## Aufbau eines Datensatzes mit Push-button-Messungen
+
+**Disclaimer: Ich selbst habe noch nie Push-Button-Daten erhoben oder substantiell analysiert. Die Darstellungen hierzu beruhen lediglich auf meinen Versuchen mit den GLES-Daten und auf Gesprächen mit anderen.**
+
+Push-Button-Messungen werden in der Regel als Event-Daten aufgezeichnet. Dabei wird für jeden Knopf die Aktivitätszeit protokolliert (z.B. Start und Ende des Drückens oder nur Start des Drückens). Vor der Analyse werden diese Daten häufig in einen Datensatz mit regelmäßigen Zeitmessungen transformiert. In den GLES-Daten wird analog zu den Dails für jede Sekunde berichtet, wie häufig ein Proband einen Knopf in dieser Sekunde betätigt hat. Der SPSS-Datensatz ist ebenfalls im Wide-Format gespeichert.
+
+```{r}
+d_pb = read_sav("ZA5712_v1-0-0.sav") %>% 
+  filter(versuchsbedingung == 2) # Nur "normale" Video-Rezeption
+d_pb %>% select(match_id, merkel_m_t000059, merkel_p_t000059,
+                steinbrueck_m_t000059, steinbrueck_p_t000059) # Beispiel für Sekunde 59
+```
+
+Für unsere Analysen ist wieder das Long-Format praktischer. Beachtet, dass der Datensatz nun im "Very-Long-Format" (in Ermangelung eines besseren Begriffs) ist: Eine Zeile enspricht der Zahl der Aktivitäten eines Probanden in einer Sekunde auf einem Knopf - da es vier Knöpfe gibt, sind das vier Messungen pro Proband und Sekunde.
+
+```{r}
+d_pb_long = d_pb %>%
+  select(match_id, contains("_t")) %>%
+  gather(tmp, rtr, -match_id) %>%
+  separate(tmp, c("cand", "valence", "time")) %>%
+  mutate(time = str_sub(time, 2), time = as.POSIXct(time, format = "%H%M%S"),
+         valence = factor(valence, labels = c("negative", "positive")))
+d_pb_long %>%
+  filter(match_id == "KO-C-24") %>%
+  arrange(time) # Beispiel für einen Probanden
+```
+
+## Plausibilitätscheck der Push-Button-Daten
+
+Wie häufig wird ein Knopf pro Sekunde betätigt?
+
+```{r}
+d_pb_long %>% count(rtr)
+
+d_pb_long %>% 
+  group_by(cand, valence) %>% 
+  count(rtr) %>% 
+  unite("cand_valence", c(cand, valence)) %>% 
+  spread(cand_valence, n) # Ich persönlich halte 2 oder mehr Aktionen pro Sekunde für unplausibel
+```
+
+
+Wie häufig drücken die Probanden im Zeitverlauf?
+
+```{r}
+d_pb_long %>% group_by(match_id) %>% 
+  summarise(SUM_rtr = sum(rtr)) %>%
+  ggplot(aes(SUM_rtr)) + geom_histogram()
+
+d_pb_long %>% group_by(match_id) %>% 
+  summarise(SUM_rtr = sum(rtr)) %>% 
+  arrange(desc(SUM_rtr)) # "KO-C-48" sollte ausgeschlossen werden
+```
+
+Entscheidung: Umkodieren der RTR-Messungen zu dichotomen Items (Knopf in Sekunde gedrückt); Ausschluss von "KO-C-48".
+
+```{r}
+d_pb_long = d_pb_long %>% 
+  filter(match_id != "KO-C-48") %>% 
+  mutate(rtr = as.numeric(rtr > 0))
+d_pb_long %>% group_by(cand, valence) %>% 
+  count(rtr) %>% 
+  filter(rtr == 1)
+```
+
+
+## Aggregation der RTR-Messungen über Personen
+
+Entscheidungen bei der Aggregation der Push-Button-Daten:
+
+* Zusammenfassung von Items?
+* Zusammenfassung von Messzeitpunkten? 
+
+Ohne weitere Zusammenfassung: Anzahl bzw. Anteil (standardisiert, für Gruppenvergleiche in der App) der Personen, die in einer Sekunde einen Knopf gedrückt haben.
+
+```{r}
+d_pb_long %>% group_by(time, cand, valence) %>% 
+  summarise(P_rtr = mean(rtr), n_rtr = n()) %>%
+  ungroup %>% 
+  mutate(P_rtr = if_else(valence == "positive", P_rtr, P_rtr * -1)) %>% 
+  ggplot(aes(time, P_rtr)) + geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap("cand", ncol = 1) +
+  coord_cartesian(xlim = c(as.POSIXct("00:00:00", format = "%H:%M:%S"),
+                           as.POSIXct("00:05:00", format = "%H:%M:%S")))
+```
+
+Keine Zusammenfassung der Items, Bewertungen pro Minute.
+
+```{r}
+d_pb_long %>% mutate(time60 = round_date(time, unit = "60 secs")) %>% 
+  group_by(time60, cand, valence) %>% 
+  summarise(P_rtr = mean(rtr), n_rtr = n()) %>%
+  ungroup %>% 
+  mutate(P_rtr = if_else(valence == "positive", P_rtr, P_rtr * -1)) %>% 
+  ggplot(aes(time60, P_rtr)) + geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap("cand", ncol = 1) +
+  coord_cartesian(xlim = c(as.POSIXct("00:00:00", format = "%H:%M:%S"),
+                           as.POSIXct("00:15:00", format = "%H:%M:%S")))
+```
+
+Within-Kandidaten-Saldo (Kandidat positiv - Kandidat negativ).
+
+```{r}
+d_pb_long %>% group_by(time, cand, valence) %>% 
+  summarise(P_rtr = mean(rtr), n_rtr = n()) %>%
+  ungroup %>% 
+  mutate(P_rtr = if_else(valence == "positive", P_rtr, P_rtr * -1)) %>%
+  group_by(time, cand) %>% 
+  summarise(S_rtr = sum(P_rtr)) %>% 
+  ggplot(aes(time, S_rtr)) + geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap("cand", ncol = 1) +
+  coord_cartesian(xlim = c(as.POSIXct("00:00:00", format = "%H:%M:%S"),
+                           as.POSIXct("00:05:00", format = "%H:%M:%S")))
+```
+
+Between-Kandidaten-Saldo (Saldo Merkel - Saldo Steinbrück).
+
+```{r}
+d_pb_long %>% group_by(time, cand, valence) %>% 
+  summarise(P_rtr = mean(rtr), n_rtr = n()) %>%
+  ungroup %>% 
+  mutate(P_rtr = if_else(valence == "positive", P_rtr, P_rtr * -1)) %>%
+  group_by(time, cand) %>% 
+  summarise(S_rtr = sum(P_rtr)) %>%
+  ungroup %>% 
+  mutate(S_rtr = if_else(cand == "merkel", S_rtr, S_rtr * -1)) %>% 
+  group_by(time) %>%
+  summarise(SS_rtr = sum(S_rtr)) %>% 
+  ggplot(aes(time, SS_rtr)) + geom_bar(stat = "identity", position = "dodge") +
+  coord_cartesian(xlim = c(as.POSIXct("00:00:00", format = "%H:%M:%S"),
+                           as.POSIXct("00:05:00", format = "%H:%M:%S")))
+```
+
+
+# Verknüpfung von Datensätzen am Beispiel der Dial-Daten
+
+Probandeneigenschaften können über die *match_id* aus dem Befragungsdatensatz hinzugefügt werden. In diesem einfachen Beispiel wollen wir nach der Kanzlerpräferenz vor der Debatte unterscheiden.
+
+```{r}
+d_survey = read_sav("ZA5709_v3-0-0.sav", user_na = TRUE)
+d_kpraef = d_survey %>% 
+  mutate(kpraef = as_factor(a38)) %>% 
+  select(match_id, kpraef)
+d_kpraef
+d_dail_long %>%
+  left_join(d_kpraef, by = "match_id")
+```
+
+Auf dieser Basis können wir Zeitreihen für die drei Gruppen erstellen und visuell vergleichen.
+
+```{r}
+d_dail_long %>%
+  left_join(d_kpraef, by = "match_id") %>% 
+  filter(kpraef != "keine Angabe") %>% 
+  group_by(time, kpraef) %>% 
+  summarise(M_rtr = mean(rtr),
+            SD_rtr = sd(rtr),
+            n_rtr = n()) %>% 
+    ggplot(aes(time, M_rtr, color = kpraef)) + geom_line(aes(time, M_rtr)) +
+  coord_cartesian(xlim = c(as.POSIXct("00:00:00", format = "%H:%M:%S"),
+                           as.POSIXct("00:05:00", format = "%H:%M:%S")))
+```
+
+Der Inhaltsanalyse-Datensatz enthält in jeder Zeile eine Aussage mit Start- und Endzeit.
+
+```{r}
+d_content = read_sav("ZA5710_v2-1-0.sav")
+d_content = d_content %>%
+  mutate(start_time = paste(v2, v3, v4, sep = ":"),
+         end_time = paste(v5, v6, v7, sep = ":"),
+         start_time = as.POSIXct(start_time, format = "%H:%M:%S"),
+         end_time = as.POSIXct(end_time, format = "%H:%M:%S")) # Zeitmarken im R Zeitformat
+d_content %>% select(start_time, end_time, v1, v10, v12)
+```
+
+In diesem Format können die Aussagen in Plots eingezeichent werden (z.B. der Sprecher, *v10*).
+
+```{r}
+d_sprecher = d_content %>% 
+  mutate(sprecher = as_factor(v10)) %>% 
+  select(start_time, end_time, v1, sprecher)
+
+d_dail_long %>%
+  group_by(time) %>% 
+  summarise(M_rtr = mean(rtr),
+            SD_rtr = sd(rtr),
+            n_rtr = n()) %>% 
+  ggplot(aes(time, M_rtr)) + geom_line(aes(time, M_rtr)) +
+  geom_rect(data = d_sprecher, aes(xmin = start_time, xmax = end_time,
+                                   ymin = -Inf, ymax = Inf, fill = sprecher),
+            alpha = 0.3, inherit.aes = FALSE) +
+  coord_cartesian(xlim = c(as.POSIXct("00:00:00", format = "%H:%M:%S"),
+                           as.POSIXct("00:05:00", format = "%H:%M:%S")))
+```
+
+Für das Fusionieren des Inhaltsanalyse-Datensatzes mit den RTR-Messungen benötigen wir einen Datensatz, in dem jede Sekunde einer Aussage zugeordnet ist. Diese Zuordnung können wir beispielsweise so erreichen.
+
+```{r}
+d_aus_id = d_content %>% 
+  select(start_time, end_time, v1)
+d_aus_id_long = seq.POSIXt(min(d_dail_long$time), max(d_dail_long$time), by = "sec") %>%
+  map_df(~d_aus_id %>% filter(.x >= start_time & .x < end_time) %>% mutate(time = .x)) %>% 
+  select(time, v1)
+d_aus_id_long
+```
+
+Wir sehen, dass die Aussagen nicht völlig überschneidungsfrei sind. Für manche statistischen Analysezugänge müssten wir diese Doppelungen bereinigen.
+
+```{r}
+d_aus_id_long %>% 
+  count(time) %>% 
+  count(n)
+```
+
+Nun können wir z.B. den Sprecher jeder Sekunde im RTR-Datensatz einfügen.
+
+```{r}
+d_dail_long %>% 
+  left_join(d_aus_id_long, by = "time") %>% 
+  left_join(d_sprecher %>% select(v1, sprecher), by = "v1")
+```
+
+# Identifikation von auffälligen Aussagen mit RTR-(Dial)-Messungen
+
+Neben der visuellen Inspektion der RTR-Kurve sind zwei Vorgehen verbreitet, um auffällige Aussagen in einer RTR-Kurve zu identifizieren:
+
+* Vergleich mit absoluten Grenzwerten (z.B. +/- 1.5 Skalenpunkte von 0)
+* Stärkste Abweichungen vom Mittelwert der RTR-Kurve (z.B. +/- 2 Standardabweichungen vom Mittelwert)
+
+Z.B. Passagen, in denen die Bewertung durch das gesamte Publikum den Grenzwert von +/- 1 Skalenpunkten überschreitet.
+
+```{r}
+peaks = d_dail_long %>%
+  group_by(time) %>% 
+  summarise(M_rtr = mean(rtr)) %>% 
+  filter(abs(M_rtr) > 1) %>% 
+  mutate(peak_lag = difftime(time, lag(time), "secs")) %>% ungroup # Nur Peaks
+
+ctr = 1
+for (i in 2:nrow(peaks)) {
+  if (peaks$peak_lag[i] > 5 | is.na(peaks$peak_lag[i])) ctr[i] = ctr[i - 1] + 1 else ctr[i] = ctr[i - 1]
+  } # Zusammenfassung von Peak-Messungen, die innerhalb von 5 Sekunden liegen, zu einem Peak
+
+peaks = peaks %>%
+  mutate(peak = ctr) %>%
+  group_by(peak) %>%
+  summarise(peak_start = min(time),
+            peak_end = max(time),
+            peak_med = median(time),
+            peak_rtr = ifelse(abs(min(M_rtr)) > abs(max(M_rtr)), min(M_rtr), max(M_rtr))) # Peaks
+peaks
+
+d_dail_long %>%
+  group_by(time) %>% 
+  summarise(M_rtr = mean(rtr)) %>% 
+  ggplot(aes(time, M_rtr)) +
+  geom_rect(data = peaks, aes(xmin = peak_start, xmax = peak_end, ymin = -Inf, ymax = Inf),
+            fill = "yellow", alpha = 0.5, inherit.aes = FALSE) + 
+  geom_line() + 
+  geom_label(data = peaks, aes(peak_med, peak_rtr + peak_rtr*0.1, label = peak), inherit.aes = FALSE) # Alle Peaks in der Kurve
+```
+
+Z.B. Passagen, in denen die Bewertung durch das gesamte Publikum 2 SD vom Mittelwert abweichen.
+
+```{r}
+peaks = d_dail_long %>%
+  group_by(time) %>% 
+  summarise(M_rtr = mean(rtr)) %>%
+  ungroup %>% 
+  mutate(M_M_rtr = mean(M_rtr), SD_M_rtr = sd(M_rtr),
+         loli = M_M_rtr - 2 * SD_M_rtr,
+         upli = M_M_rtr + 2 * SD_M_rtr) %>% 
+  filter(M_rtr > upli | M_rtr < loli) %>% 
+  ungroup %>% 
+  mutate(peak_lag = difftime(time, lag(time), "secs")) %>% ungroup # Nur Peaks
+
+ctr = 1
+for (i in 2:nrow(peaks)) {
+  if (peaks$peak_lag[i] > 5 | is.na(peaks$peak_lag[i])) ctr[i] = ctr[i - 1] + 1 else ctr[i] = ctr[i - 1]
+  } # Zusammenfassung von Peak-Messungen, die innerhalb von 5 Sekunden liegen, zu einem Peak
+
+peaks = peaks %>%
+  mutate(peak = ctr) %>%
+  group_by(peak) %>%
+  summarise(peak_start = min(time),
+            peak_end = max(time),
+            peak_med = median(time),
+            peak_rtr = ifelse(abs(min(M_rtr)) > abs(max(M_rtr)), min(M_rtr), max(M_rtr))) # Peaks
+peaks
+
+d_dail_long %>%
+  group_by(time) %>% 
+  summarise(M_rtr = mean(rtr)) %>% 
+  ggplot(aes(time, M_rtr)) +
+  geom_rect(data = peaks, aes(xmin = peak_start, xmax = peak_end, ymin = -Inf, ymax = Inf),
+            fill = "yellow", alpha = 0.5, inherit.aes = FALSE) + 
+  geom_line() + 
+  geom_label(data = peaks, aes(peak_med, peak_rtr + peak_rtr*0.1, label = peak), inherit.aes = FALSE) # Alle Peaks in der Kurve
+```
+
+Dieselbe Logik lässt sich auf die Identifikation besonders polarisierender Passagen übertragen. Wir müssen dazu lediglich die Mittelwert-Zeitreihe durch eine Standardabweichung-Zeitreihe ersetzen.
+
+```{r}
+peaks = d_dail_long %>%
+  group_by(time) %>% 
+  summarise(SD_rtr = sd(rtr)) %>% 
+  filter(abs(SD_rtr) > 1.7) %>% 
+  mutate(peak_lag = difftime(time, lag(time), "secs")) %>% ungroup # Nur Peaks
+
+ctr = 1
+for (i in 2:nrow(peaks)) {
+  if (peaks$peak_lag[i] > 5 | is.na(peaks$peak_lag[i])) ctr[i] = ctr[i - 1] + 1 else ctr[i] = ctr[i - 1]
+  } # Zusammenfassung von Peak-Messungen, die innerhalb von 5 Sekunden liegen, zu einem Peak
+
+peaks = peaks %>%
+  mutate(peak = ctr) %>%
+  group_by(peak) %>%
+  summarise(peak_start = min(time),
+            peak_end = max(time),
+            peak_med = median(time),
+            peak_rtr = max(SD_rtr)) # Peaks
+peaks
+
+d_dail_long %>%
+  group_by(time) %>% 
+  summarise(SD_rtr = sd(rtr)) %>% 
+  ggplot(aes(time, SD_rtr)) +
+  geom_rect(data = peaks, aes(xmin = peak_start, xmax = peak_end, ymin = -Inf, ymax = Inf),
+            fill = "yellow", alpha = 0.5, inherit.aes = FALSE) + 
+  geom_line() + 
+  geom_label(data = peaks, aes(peak_med, peak_rtr + peak_rtr*0.1, label = peak), inherit.aes = FALSE) # Alle Peaks in der Kurve
+```
+
+# Einfaches Mehrebenen-Modell der RTR-Dail-Daten
+
+## Vorbereitung
+
+Pakete für Mehrebenen-Modelle
+Falls die folgenden Pakete noch nicht installiert sind, mit `install.packages()` installieren.
+
+```{r}
+library(lme4)
+library(sjstats)
+```
+
+
+Daten für kreuzklassifizierte Intercept-Only-Modelle nach Kandidaten
+
+```{r}
+d_ml_merkel = d_dail_long %>% 
+  left_join(d_aus_id_long, by = "time") %>% 
+  left_join(d_sprecher %>% select(v1, sprecher), by = "v1") %>% 
+  filter(sprecher == "Merkel, Angela") %>% 
+  rename(aus_id = v1) %>% 
+  mutate(kombi_id = paste0(match_id, aus_id))
+d_ml_merkel
+
+d_ml_steinbrueck = d_dail_long %>% 
+  left_join(d_aus_id_long, by = "time") %>% 
+  left_join(d_sprecher %>% select(v1, sprecher), by = "v1") %>% 
+  filter(sprecher == "Steinbrueck, Peer") %>% 
+  rename(aus_id = v1) %>% 
+  mutate(rtr = rtr * -1, # Drehen der Werte für Steinbrück
+         kombi_id = paste0(match_id, aus_id))
+d_ml_steinbrueck
+```
+
+## Varianzdekomposition
+
+Wir zerlegen die Varianz in vier Komponenten:
+
+* *kombi_id*: Messmodell; hier ein einfacher Mittelwert der RTR-Werte einer Person während einer Aussage; kann durch Interaktionen zwischen Personen- und Inhaltsmerkmalen erklärt werden.
+* *match_id*: Varianz der Messmodelle innerhalb der Aussagen zwischen den Personen; kann durch Personenmerkmale erklärt werden.
+* *aus_id*: Varianz der Messmodelle innerhalb der Personen zwischen den Aussagen; kann durch Aussagenmerkmale erklärt werden.
+* Residualvarianz; Abweichungen der einzelenen Messungen vom Messmodell; hier vom einfachen Mittelwert
+
+Für die Aussagen von Angela Merkel
+
+```{r}
+m0_merkel = d_ml_merkel %>% 
+  lmer(rtr ~ 1 + (1 | match_id) + (1 | aus_id) + (1 | kombi_id), data = .)
+m0_merkel %>% summary
+m0_merkel %>% icc
+```
+
+Für die Aussagen von Peer Steinbrück
+
+```{r}
+m0_steinbrueck = d_ml_steinbrueck %>% 
+  lmer(rtr ~ 1 + (1 | match_id) + (1 | aus_id) + (1 | kombi_id), data = .)
+m0_steinbrueck %>% summary
+m0_steinbrueck %>% icc
+```
