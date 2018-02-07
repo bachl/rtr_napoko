@@ -1,6 +1,7 @@
 # Material zum NapoKo-Workshop "Medienwirkungsforschung in Echtzeit: RTR-Messung in der Politischen Kommunikation"
 
-## Von Marko Bachl, Universität Hohenheim
+## Marko Bachl, Universität Hohenheim
+## Andreas Fahr, Université Fribourg 
 
 Hier findet ihr das Material zum NapoKo-Workshop. Alle Infos zum Workshop gibt es hier: http://napoko.de/?p=1369.
 
