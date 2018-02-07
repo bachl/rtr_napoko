@@ -31,7 +31,7 @@ library(tidyverse); theme_set(theme_bw()) # Datenmanagement und Plots
 Häufig sind RTR-Datensätze in SPSS im sogenannten Wide-Format gespeichert: Jede Zeile ist ein Proband, jede Variable die RTR-Messung in einer Sekunde.
 
 ```{r}
-d_dail = read_sav("ZA5711_v1-0-0.sav")
+d_dail = read_sav("gles_data/ZA5711_v1-0-0.sav")
 d_dail %>% select(match_id, starts_with("t"))
 ```
 
@@ -112,7 +112,7 @@ d_dail_long %>%
 Push-Button-Messungen werden in der Regel als Event-Daten aufgezeichnet. Dabei wird für jeden Knopf die Aktivitätszeit protokolliert (z.B. Start und Ende des Drückens oder nur Start des Drückens). Vor der Analyse werden diese Daten häufig in einen Datensatz mit regelmäßigen Zeitmessungen transformiert. In den GLES-Daten wird analog zu den Dails für jede Sekunde berichtet, wie häufig ein Proband einen Knopf in dieser Sekunde betätigt hat. Der SPSS-Datensatz ist ebenfalls im Wide-Format gespeichert.
 
 ```{r}
-d_pb = read_sav("ZA5712_v1-0-0.sav") %>% 
+d_pb = read_sav("gles_data/ZA5712_v1-0-0.sav") %>% 
   filter(versuchsbedingung == 2) # Nur "normale" Video-Rezeption
 d_pb %>% select(match_id, merkel_m_t000059, merkel_p_t000059,
                 steinbrueck_m_t000059, steinbrueck_p_t000059) # Beispiel für Sekunde 59
@@ -244,7 +244,7 @@ d_pb_long %>% group_by(time, cand, valence) %>%
 Probandeneigenschaften können über die *match_id* aus dem Befragungsdatensatz hinzugefügt werden. In diesem einfachen Beispiel wollen wir nach der Kanzlerpräferenz vor der Debatte unterscheiden.
 
 ```{r}
-d_survey = read_sav("ZA5709_v3-0-0.sav", user_na = TRUE)
+d_survey = read_sav("gles_data/ZA5709_v3-0-0.sav", user_na = TRUE)
 d_kpraef = d_survey %>% 
   mutate(kpraef = as_factor(a38)) %>% 
   select(match_id, kpraef)
@@ -271,7 +271,7 @@ d_dail_long %>%
 Der Inhaltsanalyse-Datensatz enthält in jeder Zeile eine Aussage mit Start- und Endzeit.
 
 ```{r}
-d_content = read_sav("ZA5710_v2-1-0.sav")
+d_content = read_sav("gles_data/ZA5710_v2-1-0.sav")
 d_content = d_content %>%
   mutate(start_time = paste(v2, v3, v4, sep = ":"),
          end_time = paste(v5, v6, v7, sep = ":"),
